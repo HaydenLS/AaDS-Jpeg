@@ -108,7 +108,7 @@ class DCT_Quantization:
         
         return np.array(dct)
 
-    def idct2d_chammel(self, block_dct_coefs, q_matrix):
+    def idct2d_channel(self, block_dct_coefs, q_matrix):
         """
         Обратное квантование + дкт
         """

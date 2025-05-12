@@ -1,4 +1,5 @@
 import numpy as np
+from dims import get_block_dimensions
 
 class ColorTransforms:
     def __init__(self, img_shape=None):
@@ -27,31 +28,35 @@ class ColorTransforms:
         return y_blocks, cb_blocks, cr_blocks
 
     def transform_backward(self, ycbcr_tuple, shape=None):
-        """
-        Blocks -> Merge -> Upsample -> YCbCr2RGB
-        """
-        self.img_shape = shape if shape is not None else self.img_shape
+        self.img_shape = shape
         h, w = self.img_shape[:2]
 
         y_blocks, cb_blocks, cr_blocks = ycbcr_tuple
 
         # Собираем каналы из блоков
         y = merge_blocks(y_blocks, (h, w))
-        cb = merge_blocks(cb_blocks, (h // 2, w // 2))
-        cr = merge_blocks(cr_blocks, (h // 2, w // 2))
 
-        # Апсемплинг цветовых каналов
+        # Для cb/cr сначала восстанавливаем без обрезки
+        padded_h_cbcr = cb_blocks.shape[0] * 8
+        padded_w_cbcr = cb_blocks.shape[1] * 8
+
+        cb = merge_blocks(cb_blocks, (padded_h_cbcr, padded_w_cbcr))
+        cr = merge_blocks(cr_blocks, (padded_h_cbcr, padded_w_cbcr))
+
+        # Апсемплируем
         cb_up = bilinear_upsample(cb)
         cr_up = bilinear_upsample(cr)
 
-        # Объединение в YCbCr
-        ycbcr = np.stack((y, cb_up, cr_up), axis=-1)
+        # Теперь обрезаем до точного размера Y
+        cb_up = cb_up[:y.shape[0], :y.shape[1]]
+        cr_up = cr_up[:y.shape[0], :y.shape[1]]
 
-        # Обратное преобразование в RGB
+        print(f"img shape: y {y.shape}, cb {cb_up.shape}, cr {cr_up.shape}")
+
+        ycbcr = np.stack((y, cb_up, cr_up), axis=-1)
         rgb = YCBCR2RGB(ycbcr)
 
         return rgb
-
 
 
 

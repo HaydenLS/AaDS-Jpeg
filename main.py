@@ -14,20 +14,24 @@ from dct_quantization import DCT_Quantization
 # ZIGZAG + RLE + AC DC ECODING + HUFFMAN
 from coder import Huffman, BitReader
 
+cb_coded_global = []
+
+
 class Jpeg:
     def __init__(self, input_file = None, output_file = None):
         self.input_file = input_file
         self.output_file = output_file
 
-    def encode(self, file, quality):
+    def encode(self, file, output_file, quality):
         img_original = Image.open(file)
         img = np.array(img_original)
         h, w = img.shape[:2]
 
-        # Color Transforms + Downsampling + блокировка
+        # Color Transforms + Downsampling + деление на блоки
         color_transforms = ColorTransforms(img.shape)
         y, cb, cr = color_transforms.transform_forward(img)
-
+        print(y.shape, cb.shape, cr.shape)
+        
         # DCT + Квантование
         dct_quantization = DCT_Quantization(quality)
         y_dct, cb_dct, cr_dct = dct_quantization.dct2d(y, cb, cr)
@@ -38,8 +42,9 @@ class Jpeg:
         cb_dc, cb_ac = huffman_encoder.encode(cb_dct, 'chrom')
         cr_dc, cr_ac = huffman_encoder.encode(cr_dct, 'chrom')
 
+        
         # Сохраняем всё в файл 
-        with open("images/output/question.myjpeg", "wb") as f:
+        with open(output_file, "wb") as f:
             # Header: размеры
             f.write(struct.pack("HH", h, w))  # 4 байта
 
@@ -69,10 +74,6 @@ class Jpeg:
 
 
     def decode(self, file):
-        from coder import DC, AC, inverse_zigzag
-        from dct_quantization import DCT_Quantization
-        from color_transforms import ColorTransforms
-
         with open(file, "rb") as f:
             h, w = struct.unpack("HH", f.read(4))
 
@@ -82,57 +83,49 @@ class Jpeg:
             def read_bytes():
                 count = struct.unpack("I", f.read(4))[0]
                 blocks = []
+
                 for _ in range(count):
                     size = struct.unpack("I", f.read(4))[0]
                     blocks.append(f.read(size))
-                return blocks if count > 1 else blocks[0]
+                    
+                if count == 1: # dc
+                    return blocks[0]
+                else: # ac
+                    return blocks
 
             y_dc = read_bytes()
-            y_ac = read_bytes()
+            y_ac= read_bytes()
             cb_dc = read_bytes()
             cb_ac = read_bytes()
             cr_dc = read_bytes()
             cr_ac = read_bytes()
 
-        blocks_h = h // 8
-        blocks_w = w // 8
 
         # Декодирование
-        dc_decoder = DC()
-        ac_decoder = AC()
+        huffman_decoder = Huffman()
 
-        y_dc_vals = dc_decoder.decode(BitReader(y_dc), blocks_h * blocks_w, 'lum')
-        y_ac_vals = ac_decoder.decode(BitReader(y_ac), blocks_h * blocks_w, 'lum')
-        cb_dc_vals = dc_decoder.decode(BitReader(cb_dc), blocks_h * blocks_w // 4, 'chrom')
-        cb_ac_vals = ac_decoder.decode(BitReader(cb_ac), blocks_h * blocks_w // 4, 'chrom')
-        cr_dc_vals = dc_decoder.decode(BitReader(cr_dc), blocks_h * blocks_w // 4, 'chrom')
-        cr_ac_vals = ac_decoder.decode(BitReader(cr_ac), blocks_h * blocks_w // 4, 'chrom')
-
-        def build_channel(dc_vals, ac_vals, blocks_h, blocks_w):
-            channel = np.zeros((blocks_h, blocks_w, 8, 8))
-            for i in range(blocks_h):
-                for j in range(blocks_w):
-                    idx = i * blocks_w + j
-                    zz = [dc_vals[idx]] + ac_vals[idx]
-                    channel[i, j] = inverse_zigzag(zz)
-            return channel
-
-        y_dct = build_channel(y_dc_vals, y_ac_vals, blocks_h, blocks_w)
-        cb_dct = build_channel(cb_dc_vals, cb_ac_vals, blocks_h//2, blocks_w//2)
-        cr_dct = build_channel(cr_dc_vals, cr_ac_vals, blocks_h//2, blocks_w//2)
+        y_dct = huffman_decoder.decode(y_dc, y_ac, h, w, 'lum')
+        cb_dct = huffman_decoder.decode(cb_dc, cb_ac, h, w, 'chrom')
+        cr_dct = huffman_decoder.decode(cr_dc, cr_ac, h, w, 'chrom')
+        
+        
 
         # DCT Inverse
-        dct_quant = DCT_Quantization(quality=50)  # используется только для IDCT
+        dct_quant = DCT_Quantization(quality=100)  # используется только для IDCT
         dct_quant.q_y = q_y
         dct_quant.q_c = q_c
-        y_img, cb_img, cr_img = dct_quant.idct2d(y_dct, cb_dct, cr_dct)
+        # Преобразуем
+        y_img = dct_quant.idct2d_channel(y_dct, q_y)
+        cb_img = dct_quant.idct2d_channel(cb_dct, q_c)
+        cr_img = dct_quant.idct2d_channel(cr_dct, q_c)
 
         # Обратное преобразование цвета
-        ct = ColorTransforms((h, w, 3))
-        img_recon = ct.transform_backward((y_img, cb_img, cr_img))
+        ct = ColorTransforms((h, w))
+        print(y_img.shape, cb_img.shape, cr_img.shape)
+        img_recon = ct.transform_backward((y_img, cr_img, cb_img), (h, w))
 
 
-        Image.fromarray(np.clip(img_recon, 0, 255).astype(np.uint8)).save("images/result/decoded.png")
+        Image.fromarray(np.clip(img_recon, 0, 255).astype(np.uint8)).save("images/results/decoded.png")
 
 
 
@@ -140,14 +133,14 @@ class Jpeg:
 
 # main
 if __name__ == "__main__":
-    filename = "images/test/question.png"
+    filename_in = "images/test/again.png"
+    ilename_out = "images/output/again.myjpeg"
     jpeg = Jpeg()
-    jpeg.encode(filename, 80)
+    jpeg.encode(filename_in, ilename_out, 100)
     print("Файл успешно закодирован")
 
-    filename = "images/output/question.myjpeg"
     jpeg = Jpeg()
-    jpeg.decode(filename)
+    jpeg.decode(ilename_out)
     print("Файл успешно декодирован")
 
 

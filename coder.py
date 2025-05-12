@@ -1,5 +1,7 @@
 import numpy as np
 from huffman_tables import *
+import math
+from dims import get_block_dimensions
 
 # Класс для работы с битовой строкой
 class BitStream:
@@ -24,37 +26,71 @@ class BitStream:
         if self.bit_pos != 7:
             self.bits.append(self.current_byte)
         return bytes(self.bits)
-class BitReader:
-    def __init__(self, data):
-        self.data = data
-        self.byte_pos = 0
-        self.bit_pos = 7
 
-    def read_bit(self):
-        if self.byte_pos >= len(self.data):
-            raise EOFError("End of bitstream reached")
-        bit = (self.data[self.byte_pos] >> self.bit_pos) & 1
-        self.bit_pos -= 1
-        if self.bit_pos < 0:
-            self.bit_pos = 7
-            self.byte_pos += 1
-        return bit
+
+class BitReader:
+    def __init__(self, data, table):
+        self.data = data
+        self.bit_pos = 0
+        self.current_byte = 0
+        self.current_byte_pos = 0
+
+        self.reverse_table = {v: k for k, v in table.items()}
 
     def read_bits(self, n):
-        val = 0
+        result = 0
         for _ in range(n):
-            val = (val << 1) | self.read_bit()
-        return val
+            if self.current_byte_pos == 0:
+                self.current_byte = self.data[self.bit_pos]
+                self.bit_pos += 1
+                self.current_byte_pos = 8
+            
+            result <<= 1
+            result |= (self.current_byte >> (self.current_byte_pos - 1)) & 1
+            self.current_byte_pos -= 1
+        
+        return result
 
-    def read_huffman(self, table):
+    def read_huffman_code(self, table):
         code = ""
         while True:
-            bit = str(self.read_bit())
-            code += bit
-            for k, (huff_code, _) in table.items():
-                if huff_code == code:
-                    return k
+            bit = self.read_bits(1)
+            code += str(bit)
+            if code in self.reverse_table:
+                return self.reverse_table[code]
 
+class ZigZag:
+    def __init__(self, n=8):
+        self.indicies = self._zigzag_indices(n)
+
+    def zigzag_scan(self, block): 
+            return [block[i][j] for (i,j) in self.indicies]
+    
+    def inverse_zigzag(self, sequence, n=8):
+        block = np.zeros((n, n))
+        for k, (i, j) in enumerate(self.indicies):
+            block[i][j] = sequence[k]
+        return block
+
+    # Метод зигзаг обхода (indicies)
+    def _zigzag_indices(self, n=8):
+        indices = []
+        for d in range(2 * n - 1):  # Все диагонали
+            if d < n:
+                for i in range(d + 1):
+                    j = d - i
+                    if d % 2 == 0:
+                        indices.append((i, j))
+                    else:
+                        indices.append((j, i))
+            else:
+                for i in range(d - n + 1, n):
+                    j = d - i
+                    if d % 2 == 0:
+                        indices.append((i, j))
+                    else:
+                        indices.append((j, i))
+        return indices
 
 # Определение категории для значения
 def get_category(value):
@@ -63,11 +99,15 @@ def get_category(value):
     abs_val = abs(value)
     return int(np.floor(np.log2(abs_val))) + 1
 
-
 ## Класс для работы с DC коэффициентами
 class DC:
     def encode(self, dc_components, component_type='lum'):
-        dc_diff = self.encode_dc_coefficients(dc_components)
+        
+        # Получаем разности коэффициентов
+        dc_diff = [dc_components[0]]
+        for i in range(1, len(dc_components)):
+            dc_diff.append(dc_components[i] - dc_components[i-1])
+        
 
         """Кодирование DC с выбором таблицы"""
         table = huffman_dc if component_type == 'lum' else huffman_dc_chrominance
@@ -75,41 +115,43 @@ class DC:
 
         for diff in dc_diff:
             category = get_category(diff)
-            bitstream.add_bits(table[category][0])  # Добавляем код Хаффмана
+            code = table[category]
+            bitstream.add_bits(code)
             
             if category != 0:
-                # Кодирование значения (дополнительный код)
-                val = diff if diff > 0 else (abs(diff) ^ ((1 << category) - 1))
-                bitstream.add_bits(f"{val:0{category}b}")  # Добавляем значение
-
+                if diff >= 0:
+                    val = diff
+                else:
+                    val = (1 << category) + diff - 1
+                bitstream.add_bits(f"{val:0{category}b}")
+    
         return bitstream.get_bytes()
     
-    # Разностное кодирование DC коэффициентов
-    def encode_dc_coefficients(self, dc_components):
-        differences = [dc_components[0]]  # Первый DC сохраняем как есть
-        for i in range(1, len(dc_components)):
-            differences.append(dc_components[i] - dc_components[i-1])
-        return differences
-    
     # Декодирование
-    def decode(self, bitreader, count, component_type='lum'):
+    def decode(self, dc_bytes, count, component_type='lum'):
+        # Получаем таблицу Хаффмана
         table = huffman_dc if component_type == 'lum' else huffman_dc_chrominance
-        dc = []
-        prev = 0
-        for _ in range(count):
-            category = bitreader.read_huffman(table)
+
+        bitreader = BitReader(dc_bytes, table)
+
+
+        # Декодируем
+        dc_values = []
+        for i in range(count):
+            category = bitreader.read_huffman_code(table)
             if category == 0:
-                diff = 0
+                val = 0
             else:
-                bits = bitreader.read_bits(category)
-                # Преобразование из дополнительного кода
-                if bits < (1 << (category - 1)):
-                    bits -= (1 << category) - 1
-                diff = bits
-            value = prev + diff
-            dc.append(value)
-            prev = value
-        return dc
+                val = bitreader.read_bits(category)
+                if val < (1 << (category - 1)):
+                    val = val - (1 << category) + 1
+
+            if len(dc_values) > 0:
+                val += dc_values[-1]
+
+            dc_values.append(val)
+                
+        return dc_values
 
     
 ## Класс для работы с AC коэффициентами
@@ -117,137 +159,155 @@ class AC:
     def encode(self, ac_coefs, type: str):
         bits = []
         for ac_block in ac_coefs:
-            rle_encoded_ac = self.rle_encode(ac_block)
-            bit_stream = self.encode_ac_rle_str(rle_encoded_ac, type)
+            rle_encoded_ac = self._rle_encode(ac_block)
+            bit_stream = self._encode_ac(rle_encoded_ac, type)
             bits.append(bit_stream)
-
         return bits
 
 
-    def rle_encode(self, ac):
-        n = len(ac)
+    def _rle_encode(self, ac):
         encoded = []
         zero_counter = 0
-        
-        for i in range(n):
-            if ac[i] == 0:
-                zero_counter+=1
+        for coeff in ac:
+            if coeff == 0:
+                zero_counter += 1
                 if zero_counter == 16:
-                    encoded.append((15, 0)) # ZRL
+                    encoded.append((15, 0, 0))  # ZRL
                     zero_counter = 0
             else:
-                category = get_category(ac[i])
-                encoded.append((zero_counter, category))
-                encoded.append(ac[i])  # Сохраняем значение
+                category = get_category(coeff)
+                encoded.append((zero_counter, category, coeff))
                 zero_counter = 0
-
-        encoded.append((0,0))  # EOB
+        encoded.append((0, 0, 0))  # EOB
         return encoded
 
-    def encode_ac_rle_str(self, block, component_type: str):
-        """RLE + Кодирование AC коэффициентов"""
+
+    def _encode_ac(self, block, component_type: str):
         ac_table = huffman_ac if component_type == 'lum' else huffman_ac_chrominance
         bitstream = BitStream()
-            
-        for item in block:
-            if isinstance(item, tuple):  # (Run, Size)
-                bitstream.add_bits(ac_table[item][0])
-            else:  # Значение коэффициента
-                coeff = item
-                category = get_category(coeff)
-                if coeff > 0:
-                    bitstream.add_bits(f"{coeff:0{category}b}")
+
+        for run, size, coeff in block:
+            bitstream.add_bits(ac_table[(run, size)])  # Хаффман-код (run, size)
+
+            if size != 0:
+                if coeff >= 0:
+                    bitstream.add_bits(f"{coeff:0{size}b}")
                 else:
-                    bitstream.add_bits(f"{(abs(coeff)^((1<<category)-1)):0{category}b}")
-            
+                    coeff_bits = (1 << size) + coeff - 1
+                    bitstream.add_bits(f"{coeff_bits:0{size}b}")
+        
         return bitstream.get_bytes()
     
-    # Декодирование
-    def decode(self, bitreader, count, component_type='lum'):
+    def decode(self, ac_bytes, component_type: str):
+        
+        decoded_blocks = []
+        for block in ac_bytes:
+            decoded_block = self._decode_block(block, component_type)
+            decoded_blocks.append(decoded_block)
+        return decoded_blocks
+
+
+    def _decode_block(self, block, component_type: str):
+        # Получаем таблицу Хаффмана
         table = huffman_ac if component_type == 'lum' else huffman_ac_chrominance
-        blocks = []
-        for _ in range(count):
-            ac = []
-            k = 0
-            while k < 63:
-                run_size = bitreader.read_huffman(table)
-                run, size = run_size
-                if run == 0 and size == 0:
-                    # EOB
-                    while len(ac) < 63:
-                        ac.append(0)
-                    break
-                elif run == 15 and size == 0:
-                    # ZRL
-                    ac.extend([0]*16)
-                    k += 16
-                    continue
-                else:
-                    ac.extend([0]*run)
-                    val_bits = bitreader.read_bits(size)
-                    if val_bits < (1 << (size - 1)):
-                        val_bits -= (1 << size) - 1
-                    ac.append(val_bits)
-                    k += run + 1
-            blocks.append(ac)
-        return blocks
 
-# Метод зигзаг обхода
-def zigzag_indices(n=8):
-    indices = []
-    for d in range(2 * n - 1):  # Все диагонали
-        if d < n:
-            for i in range(d + 1):
-                j = d - i
-                if d % 2 == 0:
-                    indices.append((i, j))
-                else:
-                    indices.append((j, i))
-        else:
-            for i in range(d - n + 1, n):
-                j = d - i
-                if d % 2 == 0:
-                    indices.append((i, j))
-                else:
-                    indices.append((j, i))
-    return indices
+        ac_values = np.zeros(63, dtype=np.int16)
+        ac_index = 0
+        # Декодируем
+        bitreader = BitReader(block, table)
+        while True:
+            run, size = bitreader.read_huffman_code(table)
+            if run == 0 and size == 0:
+                break
 
-def zigzag_scan(block):
-    indices = zigzag_indices(len(block))
-    return [block[i][j] for (i,j) in indices]
+            coeff = 0
+            if size != 0:
+                coeff = bitreader.read_bits(size)
+                if coeff < (1 << (size - 1)):
+                    coeff = coeff - (1 << size) + 1
+                
+            # Получаем пару (run, size, coeff)
+            ac_values[ac_index + run] = coeff
+            ac_index += run+1
 
-def inverse_zigzag(sequence, n=8):
-    block = np.zeros((n, n))
-    indices = zigzag_indices(n)
-    for k, (i, j) in enumerate(indices):
-        block[i][j] = sequence[k]
-    return block
 
+
+        return ac_values
+
+
+orig = []
 
 class Huffman:
     def encode(self, channel, type: str):
-        """
-        Кодирование AC и DC коэффициентов одного канала. (y/cb/cr)
-        """
         
-        y_h, y_w = channel.shape[0], channel.shape[1]
+        if type == 'lum':
+            global orig
+            orig = channel
 
+        y_h, y_w = channel.shape[0], channel.shape[1]
         dc_coefs = []
         ac_coefs = []
+
+        # Зигзаг обход блоков
+        zz = ZigZag()
         for i in range(y_h):
             for j in range(y_w):
                 block = channel[i, j]
-                # 1. Zig Zag
-                z_block = zigzag_scan(block)
-
-                # Add to arrays
+                z_block = zz.zigzag_scan(block)
                 dc_coefs.append(z_block[0])
                 ac_coefs.append(z_block[1:])
-        
 
-        # 4. Кодирование Хаффманом
-        dc = DC(); ac = AC()
+        # Кодирование DC и AC коэффициентов
+        dc = DC()
+        ac = AC()
+
         dc_bytes = dc.encode(dc_coefs, type)
         ac_bytes = ac.encode(ac_coefs, type)
-        
+
         return dc_bytes, ac_bytes
+
+
+    def decode(self, dc_bytes, ac_bytes, h, w, component_type='lum'):
+        dc_decoder = DC()
+        ac_decoder = AC()
+
+
+        if component_type == 'lum':
+            blocks_h, blocks_w = get_block_dimensions(h, w)[0]
+        else:
+            blocks_h, blocks_w = get_block_dimensions(h, w)[1]
+
+        total_blocks = blocks_h * blocks_w
+        # Декодирование DС и AC коэффициентов
+        dc_vals = dc_decoder.decode(dc_bytes, total_blocks, component_type)
+        ac_vals = ac_decoder.decode(ac_bytes, component_type)
+
+
+        # Получаем массивы обратно.
+        blocks = []
+        zz = ZigZag()
+        for dc, ac in zip(dc_vals, ac_vals):
+            block = [0] + list(ac)
+            block[0] = dc
+            block = zz.inverse_zigzag(block)
+            blocks.append(block)
+
+        blocks = np.array(blocks)
+        blocks = blocks.reshape((blocks_h, blocks_w, 8, 8))
+
+        if component_type == 'lum':
+            global orig
+            print(np.array_equal(orig, blocks))
+
+        return np.array(blocks)
+
+
+
+
+if __name__ == "__main__":
+    dc_test = [23, 22, 20, 19, 22, 30, 28, 2, -25, -18, -16, -16, -16, -10, -5, -1, 1, 2, 1, 2]
+    dc_encoder = DC()
+    dc_bytes = dc_encoder.encode(dc_test, 'lum')
+    dc_decoder = DC()
+    decoded = dc_decoder.decode(dc_bytes, len(dc_test), 'lum')
+    print("Test:", dc_test, "->\n", decoded)
