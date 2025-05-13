@@ -235,7 +235,6 @@ class AC:
         return ac_values
 
 
-orig = []
 
 class Huffman:
     def encode(self, channel, type: str):
@@ -305,9 +304,12 @@ class Huffman:
 
 
 if __name__ == "__main__":
-    dc_test = [23, 22, 20, 19, 22, 30, 28, 2, -25, -18, -16, -16, -16, -10, -5, -1, 1, 2, 1, 2]
-    dc_encoder = DC()
-    dc_bytes = dc_encoder.encode(dc_test, 'lum')
-    dc_decoder = DC()
-    decoded = dc_decoder.decode(dc_bytes, len(dc_test), 'lum')
-    print("Test:", dc_test, "->\n", decoded)
+    ac_test1 = np.zeros(63).dtype(np.int16)
+    ac_test2 = np.zeros(63).dtype(np.int16)
+    ac_test1[5:10].fill(1)
+    ac_blocks = [ac_test1, ac_test2]
+    ac_encoder = AC()
+    dc_bytes = ac_encoder.encode(ac_blocks, 'lum')
+    ac_decoder = AC()
+    decoded = ac_decoder.decode(dc_bytes, 'lum')
+    print("Test:", ac_blocks, "->\n", decoded)

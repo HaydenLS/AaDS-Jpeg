@@ -38,11 +38,13 @@ class DCT_Quantization:
         """
         y_dct = self.dct2d_channel(y, self.Q_Y_Quality)
 
-        cb_dct = self.dct2d_channel(cb, self.Q_C_Quality)
-        cr_dct = self.dct2d_channel(cr, self.Q_C_Quality)
+        if cb != None and cr != None:
+            cb_dct = self.dct2d_channel(cb, self.Q_C_Quality)
+            cr_dct = self.dct2d_channel(cr, self.Q_C_Quality)
 
-        return y_dct, cr_dct, cb_dct
-
+            return y_dct, cr_dct, cb_dct
+        else:
+            return y_dct, None, None
     def idct2d(self, y_dct, cb_dct, cr_dct):
         """
         Применияет обратное преобразование dct + деквантование
