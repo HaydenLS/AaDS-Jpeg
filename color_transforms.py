@@ -10,39 +10,24 @@ class ColorTransforms:
         RGB->YCBCR->DOWNSAMPLE->BLOCKS
         return: (y, cb, cr): tuple
         """
-        # Проверяем, является ли изображение Grayscale (1 канал)
-        is_grayscale = len(img.shape) == 2 or img.shape[2] == 1
-        
-        if is_grayscale:
-            # Если изображение уже Grayscale, просто нормализуем его
-            if len(img.shape) == 3:
-                y = img[:, :, 0]
-            else:
-                y = img.copy()
-            
-            # Разбиение на блоки только Y канала
-            y_blocks = block_partioning(y)
-            return y_blocks, None, None
-        
-        else:
-            # Перевод в YcBcR
-            if img.shape[2] > 3:
-                img = img[:, :, :3]
-            ycbcr = RGB2YCBCR(img)
 
-            # Получим каналы
-            y, cb, cr = ycbcr.transpose(2, 0, 1)
-            # Даунсемплинг цветовых каналов.
-            cb_ds = downsample(cb)
-            cr_ds = downsample(cr)
-            
-            # Разбиение каналов на блоки 8x8
-            
-            y_blocks = block_partioning(y)
-            cb_blocks = block_partioning(cb_ds)
-            cr_blocks = block_partioning(cr_ds)
+        
+        # Перевод в YcBcR
+        ycbcr = RGB2YCBCR(img)
 
-            return y_blocks, cb_blocks, cr_blocks
+        # Получим каналы
+        y, cb, cr = ycbcr.transpose(2, 0, 1)
+        # Даунсемплинг цветовых каналов.
+        cb_ds = downsample(cb)
+        cr_ds = downsample(cr)
+        
+        # Разбиение каналов на блоки 8x8
+        
+        y_blocks = block_partioning(y)
+        cb_blocks = block_partioning(cb_ds)
+        cr_blocks = block_partioning(cr_ds)
+
+        return y_blocks, cb_blocks, cr_blocks
 
     def transform_backward(self, ycbcr_tuple, shape=None):
         self.img_shape = shape
@@ -54,8 +39,6 @@ class ColorTransforms:
         # Собираем каналы из блоков
         y = merge_blocks(y_blocks, (h, w))
 
-        if cb_blocks == None or cr_blocks == None:
-            return y.astype(np.uint8) if y.dtype != np.uint8 else y
 
         # Для cb/cr сначала восстанавливаем без обрезки
         padded_h_cbcr = cb_blocks.shape[0] * 8
@@ -81,7 +64,7 @@ class ColorTransforms:
 
 
 
-def RGB2YCBCR(img, colorspace='RGB'):
+def RGB2YCBCR(img):
     """
     Переводит изображение в формат YCbCr
     retrun: [H, W, C] матрицу

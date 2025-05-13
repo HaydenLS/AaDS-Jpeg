@@ -38,13 +38,12 @@ class DCT_Quantization:
         """
         y_dct = self.dct2d_channel(y, self.Q_Y_Quality)
 
-        if cb != None and cr != None:
-            cb_dct = self.dct2d_channel(cb, self.Q_C_Quality)
-            cr_dct = self.dct2d_channel(cr, self.Q_C_Quality)
+        
+        cb_dct = self.dct2d_channel(cb, self.Q_C_Quality)
+        cr_dct = self.dct2d_channel(cr, self.Q_C_Quality)
 
-            return y_dct, cr_dct, cb_dct
-        else:
-            return y_dct, None, None
+        return y_dct, cr_dct, cb_dct
+    
     def idct2d(self, y_dct, cb_dct, cr_dct):
         """
         Применияет обратное преобразование dct + деквантование
@@ -70,11 +69,11 @@ class DCT_Quantization:
     def get_quantization_matrix(self, base_matrix):
         if self.quality <= 0:
             scale = 5000
-        elif self.quality >= 100:
-            scale = 1
+        elif self.quality < 50:
+            scale = 5000 / self.quality
         else:
-            scale = 5000 / self.quality  # Нелинейная зависимость
-        
+            scale = 200 - self.quality * 2
+
         scaled_matrix = np.clip(np.round(base_matrix * scale / 100), 1, 255)
         return scaled_matrix
 

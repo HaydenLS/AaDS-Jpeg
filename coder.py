@@ -234,14 +234,15 @@ class AC:
 
         return ac_values
 
+orig = []
 
 
 class Huffman:
     def encode(self, channel, type: str):
         
-        if type == 'lum':
-            global orig
-            orig = channel
+        # if type == 'lum':
+        #     global orig
+        #     orig = channel
 
         y_h, y_w = channel.shape[0], channel.shape[1]
         dc_coefs = []
@@ -294,9 +295,9 @@ class Huffman:
         blocks = np.array(blocks)
         blocks = blocks.reshape((blocks_h, blocks_w, 8, 8))
 
-        if component_type == 'lum':
-            global orig
-            print(np.array_equal(orig, blocks))
+        # if component_type == 'lum':
+        #     global orig
+        #     print(np.array_equal(orig, blocks))
 
         return np.array(blocks)
 

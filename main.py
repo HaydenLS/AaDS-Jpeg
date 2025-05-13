@@ -18,22 +18,20 @@ cb_coded_global = []
 
 
 class Jpeg:
-    def __init__(self, input_file = None, output_file = None):
-        self.input_file = input_file
-        self.output_file = output_file
 
     def encode(self, file, output_file, quality):
         img_original = Image.open(file)
-        img = np.array(img_original)
+        
+        if img_original.mode in ('L', '1'):
+            img_original = img_original.convert('RGB')
+        img = np.array(img_original).astype(np.uint8)
+
         h, w = img.shape[:2]
 
         # Color Transforms + Downsampling + деление на блоки
         color_transforms = ColorTransforms(img.shape)
         y, cb, cr = color_transforms.transform_forward(img)
         
-        
-        mode = 'grayscale' if cb == None or cr == None else 'rgb'
-
 
         # DCT + Квантование
         dct_quantization = DCT_Quantization(quality)
@@ -42,20 +40,12 @@ class Jpeg:
         # Кодирование
         huffman_encoder = Huffman()
         y_dc, y_ac = huffman_encoder.encode(y_dct, 'lum')
-
-        if mode == 'rgb':
-            cb_dc, cb_ac = huffman_encoder.encode(cb_dct, 'chrom')
-            cr_dc, cr_ac = huffman_encoder.encode(cr_dct, 'chrom')
-        else:
-            cb_dc = cb_ac = cr_dc = cr_ac = None
-            
-
+        cb_dc, cb_ac = huffman_encoder.encode(cb_dct, 'chrom')
+        cr_dc, cr_ac = huffman_encoder.encode(cr_dct, 'chrom')
+        
         
         # Сохраняем всё в файл 
         with open(output_file, "wb") as f:
-            # Header: Режим
-            mode_byte = 1 if mode == 'grb' else 0
-            f.write(struct.pack('B', mode_byte))
             # Header: размеры
             f.write(struct.pack("HH", h, w))  # 4 байта
 
@@ -78,21 +68,14 @@ class Jpeg:
             
             write_bytes(y_dc)
             write_bytes(y_ac)
-
-            if mode == 'rgb':
-                write_bytes(cb_dc)
-                write_bytes(cb_ac)
-                write_bytes(cr_dc)
-                write_bytes(cr_ac)
+            write_bytes(cb_dc)
+            write_bytes(cb_ac)
+            write_bytes(cr_dc)
+            write_bytes(cr_ac)
 
 
-    def decode(self, file):
+    def decode(self, file, output_file):
         with open(file, "rb") as f:
-
-            # Header: Режим
-            
-            mode_byte = struct.unpack("B", f.read(1))
-            mode = 'rgb' if mode_byte == 1 else 'grayscale'
 
             h, w = struct.unpack("HH", f.read(4))
 
@@ -114,20 +97,18 @@ class Jpeg:
 
             y_dc = read_bytes()
             y_ac= read_bytes()
-            if mode == 'rgb':
-                cb_dc = read_bytes()
-                cb_ac = read_bytes()
-                cr_dc = read_bytes()
-                cr_ac = read_bytes()
+            cb_dc = read_bytes()
+            cb_ac = read_bytes()
+            cr_dc = read_bytes()
+            cr_ac = read_bytes()
 
 
         # Декодирование
         huffman_decoder = Huffman()
 
         y_dct = huffman_decoder.decode(y_dc, y_ac, h, w, 'lum')
-        if mode == 'rgb':
-            cb_dct = huffman_decoder.decode(cb_dc, cb_ac, h, w, 'chrom')
-            cr_dct = huffman_decoder.decode(cr_dc, cr_ac, h, w, 'chrom')
+        cb_dct = huffman_decoder.decode(cb_dc, cb_ac, h, w, 'chrom')
+        cr_dct = huffman_decoder.decode(cr_dc, cr_ac, h, w, 'chrom')
         
 
         # DCT Inverse
@@ -136,11 +117,9 @@ class Jpeg:
         dct_quant.q_c = q_c
         # Преобразуем
         y_img = dct_quant.idct2d_channel(y_dct, q_y)
-        if mode == 'rgb':
-            cb_img = dct_quant.idct2d_channel(cb_dct, q_c)
-            cr_img = dct_quant.idct2d_channel(cr_dct, q_c)
-        else:
-            cb_img = cr_img = None
+        cb_img = dct_quant.idct2d_channel(cb_dct, q_c)
+        cr_img = dct_quant.idct2d_channel(cr_dct, q_c)
+
         
         # Обратное преобразование цвета
         ct = ColorTransforms((h, w))
@@ -148,20 +127,21 @@ class Jpeg:
         img_recon = ct.transform_backward((y_img, cr_img, cb_img), (h, w))
 
 
-        Image.fromarray(np.clip(img_recon, 0, 255).astype(np.uint8)).save("images/results/decoded.png")
+        Image.fromarray(np.clip(img_recon, 0, 255).astype(np.uint8)).save(output_file)
 
 
 
 # main
 if __name__ == "__main__":
-    filename_in = "images/test/city_bw.png"
-    ilename_out = "images/output/city_bw.myjpeg"
+    filename_in = "images/test/city_bw_dither.png"
+    ilename_out = "images/encoded/city_bw_dither.jpeg"
+    ilename_dec = "images/decoded/city_bw_dither.png"
     jpeg = Jpeg()
-    jpeg.encode(filename_in, ilename_out, 1)
+    jpeg.encode(filename_in, ilename_out, 100)
     print("Файл успешно закодирован")
 
     jpeg = Jpeg()
-    jpeg.decode(ilename_out)
+    jpeg.decode(ilename_out, ilename_dec)
     print("Файл успешно декодирован")
 
 
